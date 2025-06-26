@@ -26,21 +26,21 @@ def init_db():
 def index():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT name, phone, subscription_type, joining_date, subscription_duration FROM subscribers")
+    cursor.execute("SELECT id, name, phone, subscription_type, joining_date, subscription_duration FROM subscribers")
     rows = cursor.fetchall()
     conn.close()
 
-    subscribers = []
-    expired = []
+    members = []
 
     for row in rows:
-        name, phone, sub_type, join_str, duration = row
+        member_id, name, phone, sub_type, join_str, duration = row
         join_date = datetime.strptime(join_str, "%Y-%m-%d")
         end_date = join_date + timedelta(days=duration)
         days_left = (end_date.date() - datetime.today().date()).days
         join_formatted = join_date.strftime('%d/%m/%Y')
 
-        subscribers.append({
+        members.append({
+            'id': member_id,
             'name': name,
             'phone': phone,
             'type': sub_type,
@@ -48,28 +48,48 @@ def index():
             'days_left': days_left
         })
 
-        if days_left < 0:
-            expired.append(name)
+    # Sort members: expired ones (days_left < 0) come first
+    members.sort(key=lambda x: x['days_left'])
 
-    return render_template("index.html", subscribers=subscribers, expired=expired)
+    return render_template("index.html", members=members)
 
 @app.route('/add', methods=['POST'])
 def add():
     name = request.form['name']
     phone = request.form['phone']
-    joining_date = request.form['joining_date']  # Format: YYYY-MM-DD
+    joining_date_str = request.form['joining_date']  # Format: dd/mm/yyyy
     subscription_type = request.form['subscription_type']
     duration = int(request.form['subscription_duration'])
+
+    # Convert to YYYY-MM-DD for storage
+    join_date = datetime.strptime(joining_date_str, '%d/%m/%Y').strftime('%Y-%m-%d')
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
         INSERT INTO subscribers (name, phone, joining_date, subscription_type, subscription_duration)
         VALUES (?, ?, ?, ?, ?)
-    ''', (name, phone, joining_date, subscription_type, duration))
+    ''', (name, phone, join_date, subscription_type, duration))
     conn.commit()
     conn.close()
 
+    return redirect('/')
+
+@app.route('/renew/<int:id>', methods=['POST'])
+def renew(id):
+    additional_days = int(request.form['additional_days'])
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT subscription_duration FROM subscribers WHERE id = ?", (id,))
+    current_duration = cursor.fetchone()
+    
+    if current_duration:
+        new_duration = current_duration[0] + additional_days
+        cursor.execute("UPDATE subscribers SET subscription_duration = ? WHERE id = ?", (new_duration, id))
+        conn.commit()
+    
+    conn.close()
     return redirect('/')
 
 if __name__ == '__main__':
