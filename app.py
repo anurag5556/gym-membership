@@ -1,17 +1,21 @@
 from flask import Flask, render_template, request, redirect
-import sqlite3
+import psycopg2
+import os
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 
-DB_FILE = 'gym.db'
+# Get database URL from environment variable
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# Create table if it doesn't exist
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS subscribers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT,
             phone TEXT,
             joining_date TEXT,
@@ -20,14 +24,16 @@ def init_db():
         )
     ''')
     conn.commit()
+    cursor.close()
     conn.close()
 
 @app.route('/')
 def index():
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     cursor.execute("SELECT id, name, phone, subscription_type, joining_date, subscription_duration FROM subscribers")
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
 
     members = []
@@ -48,7 +54,7 @@ def index():
             'days_left': days_left
         })
 
-    # Sort members: expired ones (days_left < 0) come first
+    # Sort so expired members appear at the top
     members.sort(key=lambda x: x['days_left'])
 
     return render_template("index.html", members=members)
@@ -61,16 +67,17 @@ def add():
     subscription_type = request.form['subscription_type']
     duration = int(request.form['subscription_duration'])
 
-    # Convert to YYYY-MM-DD for storage
+    # Convert to YYYY-MM-DD for database
     join_date = datetime.strptime(joining_date_str, '%d/%m/%Y').strftime('%Y-%m-%d')
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     cursor.execute('''
         INSERT INTO subscribers (name, phone, joining_date, subscription_type, subscription_duration)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
     ''', (name, phone, join_date, subscription_type, duration))
     conn.commit()
+    cursor.close()
     conn.close()
 
     return redirect('/')
@@ -79,16 +86,17 @@ def add():
 def renew(id):
     additional_days = int(request.form['additional_days'])
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
-    cursor.execute("SELECT subscription_duration FROM subscribers WHERE id = ?", (id,))
+    cursor.execute("SELECT subscription_duration FROM subscribers WHERE id = %s", (id,))
     current_duration = cursor.fetchone()
-    
+
     if current_duration:
         new_duration = current_duration[0] + additional_days
-        cursor.execute("UPDATE subscribers SET subscription_duration = ? WHERE id = ?", (new_duration, id))
+        cursor.execute("UPDATE subscribers SET subscription_duration = %s WHERE id = %s", (new_duration, id))
         conn.commit()
-    
+
+    cursor.close()
     conn.close()
     return redirect('/')
 
